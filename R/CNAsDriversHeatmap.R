@@ -24,178 +24,142 @@
 #'
 
 # collate all segments in subclones files across cohort
-CNAsDriversHeatmapDendrogram <- function(segfile_dir,
-                               segfile_name,
-                               bed_file,
-                               driver_file) {
+# BA edited function below
+CNAsDriversHeatmapDendrogram <- function (segfile_dir, segfile_name, bed_file, driver_file, metadata_file)
+{
+  # load libraries
+  library(dplyr)
+  library(ggplot2)
+  library(ggdendro)
+  library(reshape2)
+  library(grid)
+   
+  subclones_dir <- segfile_dir
+  
+  subclones <- system(paste0("ls ", file.path(subclones_dir, "*subclones.txt")), intern = T)
+  
+  samples <- basename(subclones)
+  
+  samples <- gsub("_subclones.txt", "", samples)
+  
+  bed <- read.table(bed_file, stringsAsFactors = F)
+  
+  dri <- read.table(driver_file, header = T, stringsAsFactors = F, fill = T)
+   
+  # BA changed line below to accommodate alternative TIER values
+  
+  dri <- dri[which(as.character(dri$TIER) %in% c("1", "2", "3", "High", "Mid", "Low")), ]
+  
+  bed <- merge(bed, dri, by.x = c(7), by.y = c("SYMBOL")) # this changes order of columns
+  
+  bed[which(bed[,2] == "chrX"), 2] <- "chr23"
+  
+  bed[,1] <- paste(bed[,2], bed[,1], sep = " ")
+  
+  # remove chromosomes/scaffolds not in data
+  bed[, 9] <- as.integer(gsub("chr", "", bed[, 2]))
+  
+  bed <- bed[which(!is.na(bed[, 9])), c(1:8)] 
 
-    # libs
-    library(dplyr)
-    library(ggplot2)
-    library(reshape)
-    library(ggdendro)
-    library(reshape2)
-    library(grid)
+  # concatenate chromosome, gene_name (these 2 are already concat in col 1) and transcript_id
+  bed[,9] <- paste(bed[,1], bed[,7], sep = " ") 
+  
+  positions_chr <- as.character(bed[, 2])
+  positions_chr <- as.character(gsub("chr", "", positions_chr))
+  positions_start <- as.character(bed[, 3])
+  positions_end <- as.character(bed[, 4])
+  positions_gene <- as.character(bed[, 9]) # actually this is now a transcript_id in bed_file
+  
+  genes <- as.data.frame(cbind(positions_gene, positions_chr, positions_start, positions_end))
+  
+  for (i in 1:ncol(genes)) {
+  genes[, i] = as.character(genes[, i])
+  }
+  
+  genes <- genes[order(as.integer(genes$positions_chr)), ]
+  genes$positions_chr <- as.integer(genes$positions_chr)
+  genes$positions_start <- as.integer(genes$positions_start)
+  genes$positions_end <- as.integer(genes$positions_end)
+  
+  genes <- genes[which(!is.na(genes[,c("positions_chr")])),]
+  
+  subs <- read.table(file.path(segfile_dir, paste0(segfile_name, "_segsfull.txt")), sep = "\t", stringsAsFactors = F, hea = T)
+  
+  subs$class[subs$class == "dip"] <- 2
+  subs$class[subs$class == "tetra"] <- 4
+  subs$class <- as.integer(subs$class)
+  subs$coded_total_cn <- NA
+  subs$total_cn <- subs$nMajor + subs$nMinor
+  subs$coded_total_cn[which(subs$total_cn == 0)] <- "homdel"
+  subs$coded_total_cn[which(subs$nMajor > 0 & subs$nMinor == 0)] <- "loh"
+  subs$coded_total_cn[which(subs$total_cn < subs$class & subs$total_cn != 0 & subs$nMinor != 0)] <- "otherloss"
+  subs$coded_total_cn[which((subs$nMajor == subs$nMinor | subs$nMajor == 3 & subs$nMinor == 1) & (subs$total_cn == subs$class))] <- "nochange"
+  subs$coded_total_cn[which(subs$total_cn > subs$class)] <- "gain"
+  subs$coded_total_cn[which(subs$total_cn > (5 * subs$class))] <- "biggain"
+  subs$chr[subs$chr == "X"] <- 23
+  
+  # in lines below original code used name tomelt instead of mat
+  
+  mat <- matrix(NA, nrow = length(unique(subs$sample)), ncol = nrow(genes)) # create matrix with NA values with rows for each sample and cols for each gene (actually transcript_id)
+  rownames(mat) <- unique(subs$sample)
+  colnames(mat) <- genes$positions_gene
+  
+  subs$chr <- as.integer(subs$chr)
 
-    # subclones nf dir
-    subclones_dir = segfile_dir
-    subclones = system(paste0("ls ",subclones_dir,"*subclones.txt"),intern=T)
-    samples = sapply(subclones,function(x){strsplit(x,"_subclones.txt")[[1]][1]})
-    samples = sapply(samples,function(x){strsplit(x,subclones_dir)[[1]][2]})
-
-    # get drivers and chr positions
-    bed = read.table(bed_file,
-                     stringsAsFactors = F)
-    dri=read.table(driver_file,
-                   hea=T,
-                   stringsAsFactors = F,
-                   fill=T)
-    # select drivers in tier 1 (highest confidence) and 2 (rescue)
-    dri = dri[which(dri$TIER==1 | dri$TIER==2),]
-    bed=bed[match(dri$SYMBOL,bed[,7]),]
-    positions_chr = as.character(bed[,1])
-    positions_chr = as.character(gsub("chr","",positions_chr))
-    positions_start = as.character(bed[,2])
-    positions_end = as.character(bed[,3])
-    positions_gene = as.character(bed[,7])
-    genes = as.data.frame(cbind(positions_gene,positions_chr,positions_start,positions_end))
-    for (i in 1:ncol(genes)){genes[,i]=as.character(genes[,i])}
-    genes$positions_chr[which(genes$positions_chr=="X")]="23"
-
-    genes = genes[order(as.integer(genes$positions_chr)),]
-    genes$positions_chr = as.integer(genes$positions_chr)
-    genes$positions_start = as.integer(genes$positions_start)
-    genes$positions_end = as.integer(genes$positions_end)
-
-    # get subs files from first step
-    subs = read.table(paste0(segfile_dir,segfile_name,"_segsfull.txt"),
-                      sep="\t",
-                      stringsAsFactors=F,
-                      hea=T)
-
-    subs$class[subs$class=="dip"]=2
-    subs$class[subs$class=="tetra"]=4
-    subs$class = as.integer(subs$class)
-    subs$coded_total_cn=NA
-    subs$total_cn = subs$nMajor + subs$nMinor
-
-    # homdels
-    subs$coded_total_cn[which(subs$total_cn==0)]= "homdel"
-    # LOH
-    subs$coded_total_cn[which(subs$nMajor>0 & subs$nMinor==0)] = "loh"
-    # non homdel non LOH loss
-    subs$coded_total_cn[which(subs$total_cn < subs$class
-                              & subs$total_cn != 0
-                              & subs$nMinor != 0)] = "otherloss"
-    # no change
-    subs$coded_total_cn[which((subs$nMajor==subs$nMinor | subs$nMajor==3 & subs$nMinor==1)
-                              & (subs$total_cn == subs$class))] = "nochange"
-    # gain
-    subs$coded_total_cn[which(subs$total_cn>subs$class)] ="gain"
-    # big gain
-    subs$coded_total_cn[which(subs$total_cn>(5*subs$class))] = "biggain"
-    # change X to 23
-    subs$chr[subs$chr=="X"]=23
-
-    # classify these in same way as was done for whole genome plot
-    # homdel = read.csv(paste0(segfile_dir,"ENDOMETRIAL_homdel_subs.full"),
-    #                   stringsAsFactors=F,
-    #                   sep="\t")
-
-    # make data table with rows = samples, columns = gene names of importance
-    tomelt = matrix(NA,nrow=length(unique(subs$sample)),ncol=nrow(genes))
-    rownames(tomelt) = unique(subs$sample)
-    colnames(tomelt) = genes$positions_gene
-
-    subs$sample = sapply(subs$sample,function(x){strsplit(x,"\\.")[[1]][2]})
-    subs$chr=as.integer(subs$chr)
-    for (i in 1:length(samples)) {
-      sub = subs[subs$sample==samples[i],]
-      for (g in 1:nrow(genes)) {
-        chr = sub[sub$chr==genes$positions_chr[g],]
-        if (nrow(chr)==0){next}
-        row = which((chr$startpos <= genes$positions_start[g]) & (chr$endpos >= genes$positions_end[g]))
-        if (length(row)==0) {
-          minrows = max(which(chr$startpos <= genes$positions_start[g]))
-          maxrows = min(which(chr$endpos >= genes$positions_end[g]))
-          if (minrows == -Inf & nrow(chr)==1) {minrows=1}
-          if (maxrows == Inf & nrow(chr)==1) {maxrows=1}
-          rows = minrows:maxrows
-          longestregion = which(chr[rows,3]-chr[rows,2] == max(chr[rows,3]-chr[rows,2]))
-          row = rows[longestregion]
-          tomelt[i,g] = sub$coded_total_cn[row]
-        } else {
-          tomelt[i,g] = sub$coded_total_cn[row]
+  for (i in 1:length(samples)) {
+    sub <- subs[subs$sample == samples[i], ] # subclones for sample[i]
+    
+    for (g in 1:nrow(genes)) {
+      chr <- sub[sub$chr == genes$positions_chr[g], ] # subclones for sample[i] with same chromosome as genes[g] (actually transcript_id), if any
+      
+      if (nrow(chr) == 0) { # if none, go to next gene
+        next
+      }
+      
+      row <- which((chr$startpos <= genes$positions_start[g]) & # find row(s) for subclones selected that have both startpos and endpos equal to or beyond gene (actually transcript_id)
+        (chr$endpos >= genes$positions_end[g])) 
+      
+      if (length(row) == 0) {
+        minrows <- max(which(chr$startpos <= genes$positions_start[g]), na.rm = TRUE) # find row in chr that has startpos closest to gene positions_start, if any 
+        maxrows <- min(which(chr$endpos >= genes$positions_end[g]), na.rm = TRUE) # find row in chr that has endpos closest to gene positions_end, if any 
+        if (minrows == -Inf & nrow(chr) == 1) {
+          minrows <- 1
         }
+        # how do you get -Inf or Inf?
+        if (maxrows == Inf & nrow(chr) == 1) {
+          maxrows <- 1
+        }
+        rows <- minrows:maxrows
+        longestregion <- which(chr[rows, c("endpos")] - chr[rows, c("startpos")] == max(chr[rows, c("endpos")] - chr[rows, c("startpos")], na.rm = TRUE))
+        row <- rows[longestregion]
+        
+        mat[i, g] <- chr$coded_total_cn[row]
+      } else {
+        mat[i, g] <- chr$coded_total_cn[row]
       }
     }
-
-    # save unmelted matrix to use for dendrogrm
-    tomelt[tomelt=="homdel"]=0
-    tomelt[tomelt=="loh"]=1
-    tomelt[tomelt=="otherloss"]=2
-    tomelt[tomelt=="nochange"]=3
-    tomelt[tomelt=="gain"]=4
-    tomelt[tomelt=="biggain"]=5
-    for (i in 1:ncol(tomelt)) {tomelt[,i]=as.numeric(tomelt[,i])}
-    write.table(tomelt,paste0(segfile_dir,segfile_name,"_dendrogram.csv"),
-                              quote=F)
-
-    # # write melted table for heatmap (old)
-    melted = melt(tomelt)
-    colnames(melted) = c("tumour", "driver","normalised_total_cn")
-    write.table(melted,paste0(segfile_dir,segfile_name,"_heatmap.csv"),
-                row.names=F,
-                quote=F)
-
-
-    # # make dendrogram
-    # library(dendextend)
-    # todend <- as.data.frame(tomelt)
-    # for (i in 1:ncol(todend)) {todend[,i]=as.numeric(todend[,i])}
-    # todend.scaled <- scale(todend)
-    # # hierarchical clustering
-    # todend.scaled.clustered <- hclust(dist(todend.scaled))
-    # # make dendrogram
-    # todend.dend <-as.dendrogram(todend.scaled.clustered)
-    # # plot
-    # dendplot <- ggdendrogram(data = todend.dend, rotate=T,axis.text.y = element_text(size = 1))
-    # pdf(paste0(segfile_dir,segfile_name,"_dendrogram.pdf"))
-    #   dendplot
-    # dev.off()
-    #
-    # # get order for heatmap from dendrogram
-    # heatmap.order = order.dendrogram(todend.dend)
-    #
-    # # make heatmap
-    # toplot = read.csv(paste0(segfile_dir,segfile_name,"_heatmap.csv"),
-    #                   stringsAsFactors=F,
-    #                   sep=" ")
-    #
-    # toplot$normalised_total_cn = as.factor(toplot$normalised_total_cn)
-    # # label genes with a factor based on order in genome so plots correctly
-    # toplot$order = as.character(sort(rep(1:length(unique(toplot$driver)),length(unique(toplot$tumour)))))
-    # toplot$driver <- factor(toplot$driver, levels=unique(toplot$driver)[order(toplot$order)])
-    # # label tumours with a factor based on order of dendrogram so plots correctly
-    # toplot = cbind(toplot,order2=rep(1:length(unique(toplot$tumour)),length(unique(toplot$driver))))
-    # toplot = cbind(toplot,use=match(toplot$order2,heatmap.order))
-    # toplot = toplot[order(as.integer(toplot$order),toplot$use),]
-    # toplot$tumour <- factor(toplot$tumour, levels = unique(toplot$tumour)[order(as.numeric(toplot$use))])
-    #
-    # plot1 <- ggplot(toplot,aes(driver, tumour, fill = normalised_total_cn)) +
-    #   geom_tile(size = 0.2) +#, color = "white") +
-    #   theme(text = element_text(size=8),
-    #         axis.title.x = element_blank(),
-    #         axis.title.y=element_blank(),
-    #         axis.text.y = element_blank(),
-    #         axis.ticks.y = element_blank(),
-    #         axis.text.x = element_text(angle = 80, vjust = 0.5),
-    #         panel.border = element_blank()) +
-    #   scale_fill_manual(values=c("black","deepskyblue4","deepskyblue2", "darkolivegreen2", "deeppink","deeppink4")) +
-    #   theme(legend.position = "left")
-    #
-    # pdf(paste0(segfile_dir,segfile_name,"_heatmap.pdf"))
-    #   plot1
-    # dev.off()
-
+  }
+  
+  mat[mat == "homdel"] <- 0
+  mat[mat == "loh"] <- 1
+  mat[mat == "otherloss"] <- 2
+  mat[mat == "nochange"] <- 3
+  mat[mat == "gain"] <- 4
+  mat[mat == "biggain"] <- 5
+  
+  for (i in 1:ncol(mat)) {
+    mat[, i] <- as.numeric(mat[, i])
+  }
+  
+  write.table(mat, file.path(segfile_dir, paste0(segfile_name, "_dendrogram.csv")), 
+    sep = "\t", quote = F)
+  
+  melted_mat <- melt(mat)
+  colnames(melted_mat) <- c("tumour", "driver", "normalised_total_cn")
+  
+  write.table(melted_mat, file.path(segfile_dir, paste0(segfile_name, "_heatmap.csv")), 
+    row.names = F, quote = F)
+  
+  write.table(mat, file.path(segfile_dir, paste0(segfile_name, "_dendrogram.csv")), 
+    sep = "\t", quote = F)
 }

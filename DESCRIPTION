@@ -18,6 +18,7 @@ Description: Calling subclonal copy number aberrations (CNA) with Battenberg, DP
     Adjusted purity (ρ) and ploidy (ψ) parameters are calculated if required, 
     and the copy number profile is iteratively refitted where necessary. 
     Detailed metrics for inclusion or exclusion of samples is provided.
+    This fork includes R scripts edited by Bob Amess for use with Nextflow CNV pipeline.
 License: GPL
 Encoding: UTF-8
 LazyData: true
