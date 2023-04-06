@@ -35,7 +35,7 @@ CollateSubclones <- function (qc, segfile_dir, segfile_name)
   subclonesPaths <- list.files(segfile_dir, , pattern = "subclones.txt", full.names = T)
   
   # BA changed line below
-  purityPaths <- gsub(pattern = "subclones.txt", replacement = "cellularity_ploidy.txt", subclonesPaths)
+  purityPaths <- gsub(pattern = "subclones.txt", replacement = "purity_ploidy.txt", subclonesPaths)
   
   for (i in 1:length(subclonesPaths)) {
     # BA edited line below
